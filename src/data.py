@@ -8,7 +8,7 @@ processed datasets for use in notebooks and production code.
 from pathlib import Path
 from typing import Optional
 import pandas as pd
-from config import (
+from .config import (
     DATA_RAW,
     DATA_PROCESSED,
 )
@@ -86,8 +86,8 @@ def clean_transactions(df: pd.DataFrame) -> pd.DataFrame:
     """
     df = df.copy()
     
-    # Convert date column to datetime
-    df['date'] = pd.to_datetime(df['date'])
+    # Convert date column to datetime64[ns] tz-naive
+    df["date"] = pd.to_datetime(df["date"], utc=True, errors="coerce").dt.tz_convert(None).dt.normalize()
     
     # Remove duplicates (keep first occurrence)
     initial_count = len(df)
@@ -103,6 +103,10 @@ def clean_transactions(df: pd.DataFrame) -> pd.DataFrame:
     
     # Sort by date for consistent ordering
     df = df.sort_values('date').reset_index(drop=True)
+    
+    # Assertions
+    assert pd.api.types.is_datetime64_any_dtype(df["date"])
+    assert df["date"].dt.tz is None
     
     return df
 
@@ -129,7 +133,7 @@ def load_and_process_transactions(
     data_processed_dir : Path, optional
         Directory to save processed data. If None, uses DATA_PROCESSED from config.
     output_file : str, optional
-        Name of output file (supports .csv, .parquet). If None, uses PROCESSED_TRANSACTIONS_FILE from config.
+        Name of output file (CSV format). If None, uses PROCESSED_TRANSACTIONS_FILE from config.
     force_reprocess : bool
         If True, reprocess even if processed file exists.
     
@@ -156,13 +160,11 @@ def load_and_process_transactions(
     # Check if processed file exists and we don't want to force reprocess
     if output_path.exists() and not force_reprocess:
         print(f"Loading processed data from {output_path}")
-        if output_path.suffix == '.parquet':
-            try:
-                df = pd.read_parquet(output_path)
-            except ImportError:
-                raise ImportError("pyarrow or fastparquet required for parquet support. Install with: poetry add pyarrow")
-        else:
-            df = pd.read_csv(output_path)
+        df = pd.read_csv(output_path, parse_dates=["date"])
+        df["date"] = pd.to_datetime(df["date"], utc=True, errors="coerce").dt.tz_convert(None).dt.normalize()
+        # Assertions
+        assert pd.api.types.is_datetime64_any_dtype(df["date"])
+        assert df["date"].dt.tz is None
         return df
     
     # Load and process raw data
@@ -176,12 +178,6 @@ def load_and_process_transactions(
     
     # Save processed data
     print(f"Saving processed data to {output_path}")
-    if output_path.suffix == '.parquet':
-        try:
-            df.to_parquet(output_path, index=False)
-        except ImportError:
-            raise ImportError("pyarrow or fastparquet required for parquet support. Install with: poetry add pyarrow")
-    else:
-        df.to_csv(output_path, index=False)
+    df.to_csv(output_path, index=False)
     
     return df
